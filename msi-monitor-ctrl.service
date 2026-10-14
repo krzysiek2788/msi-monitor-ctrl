@@ -1,0 +1,13 @@
+[Unit]
+Description=MSI Monitor KVM controller
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/msi-monitor-ctrl
+ExecStart=%h/msi-monitor-ctrl/target/release/msi-monitor-ctrl --cmd %h/msi-monitor-ctrl/usb-c.lua
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
