@@ -35,7 +35,6 @@ impl MSIDevice {
     };
     let mut device_handle = device.open()?;
     let device_desc = device.device_descriptor()?;
-
     let Some(out_endpoint) = find_endpoint(
       &mut device,
       &device_desc,
@@ -44,24 +43,41 @@ impl MSIDevice {
     ) else {
       return Err("could not find interrupt-out endpoint".into());
     };
-    configure_endpoint(&mut device_handle, &out_endpoint)?;
-
+    configure_endpoint(&mut device_handle, &out_endpoint)
+    .map_err(|e| format!(
+      "OUT endpoint: iface={}, address=0x{:02x}: {}",
+      out_endpoint.iface,
+      out_endpoint.address,
+      e
+    ))?;
     let Some(in_endpoint) = find_endpoint(
-      &mut device,
-      &device_desc,
-      Direction::In,
-      TransferType::Interrupt,
+    &mut device,
+    &device_desc,
+    Direction::In,
+    TransferType::Interrupt,
     ) else {
       return Err("could not find interrupt-in endpoint".into());
     };
-    configure_endpoint(&mut device_handle, &in_endpoint)?;
-
+    let same_interface =
+    out_endpoint.config == in_endpoint.config
+    && out_endpoint.iface == in_endpoint.iface
+    && out_endpoint.setting == in_endpoint.setting;
+    if !same_interface {
+      configure_endpoint(&mut device_handle, &in_endpoint)
+      .map_err(|e| format!(
+      "IN endpoint: iface={}, address=0x{:02x}: {}",
+      in_endpoint.iface,
+      in_endpoint.address,
+      e
+      ))?;
+    }
     Ok(Self {
       device_handle,
-      in_endpoint,
-      out_endpoint,
+       in_endpoint,
+       out_endpoint,
     })
   }
+
 
   pub(crate) fn is_connected(vendor_id: u16, product_id: u16) -> Result<bool, Box<StdError>> {
     for _ in 0..3 {
@@ -269,6 +285,7 @@ impl MSIDevice {
   }
 }
 
+
 #[derive(Debug)]
 struct Endpoint {
   config: u8,
@@ -307,7 +324,19 @@ fn configure_endpoint<T: UsbContext>(
   handle: &mut DeviceHandle<T>,
   endpoint: &Endpoint,
 ) -> rusb::Result<()> {
-  handle.set_active_configuration(endpoint.config)?;
+  #[cfg(target_os = "linux")]
+  {
+    handle.set_auto_detach_kernel_driver(true)?;
+    if handle.kernel_driver_active(endpoint.iface).unwrap_or(false) {
+      handle.detach_kernel_driver(endpoint.iface)?;
+    }
+  }
+  // On Linux the monitor already has its active configuration.
+  // Calling set_active_configuration() again may return Resource busy.
+  #[cfg(not(target_os = "linux"))]
+  {
+    handle.set_active_configuration(endpoint.config)?;
+  }
   #[cfg(target_os = "macos")]
   {
     handle.detach_kernel_driver(endpoint.iface)?;
